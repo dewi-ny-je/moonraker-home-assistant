@@ -18,6 +18,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.moonraker import (
     MoonrakerDataUpdateCoordinator,
+    _async_is_tcp_reachable,
     _build_thumbnail_path,
     _normalize_gcode_path,
     _normalize_moonraker_port,
@@ -660,9 +661,12 @@ async def test_send_gcode_identifier_fallback(hass):
             return identifier_device
         return original_async_get(device_id)
 
-    with patch.object(dev_reg, "async_get", side_effect=async_get_override), patch(
-        "moonraker_api.MoonrakerClient.call_method", new_callable=AsyncMock
-    ) as mock_call:
+    with (
+        patch.object(dev_reg, "async_get", side_effect=async_get_override),
+        patch(
+            "moonraker_api.MoonrakerClient.call_method", new_callable=AsyncMock
+        ) as mock_call,
+    ):
         await hass.services.async_call(
             DOMAIN,
             "send_gcode",
@@ -704,9 +708,12 @@ async def test_send_gcode_skips_device_without_entries(hass):
             return orphan_device
         return original_async_get(device_id)
 
-    with patch.object(dev_reg, "async_get", side_effect=async_get_override), patch(
-        "moonraker_api.MoonrakerClient.call_method", new_callable=AsyncMock
-    ) as mock_call:
+    with (
+        patch.object(dev_reg, "async_get", side_effect=async_get_override),
+        patch(
+            "moonraker_api.MoonrakerClient.call_method", new_callable=AsyncMock
+        ) as mock_call,
+    ):
         await hass.services.async_call(
             DOMAIN,
             "send_gcode",
@@ -746,9 +753,12 @@ async def test_send_gcode_skips_unloaded_entries(hass):
             return missing_device
         return original_async_get(device_id)
 
-    with patch.object(dev_reg, "async_get", side_effect=async_get_override), patch(
-        "moonraker_api.MoonrakerClient.call_method", new_callable=AsyncMock
-    ) as mock_call:
+    with (
+        patch.object(dev_reg, "async_get", side_effect=async_get_override),
+        patch(
+            "moonraker_api.MoonrakerClient.call_method", new_callable=AsyncMock
+        ) as mock_call,
+    ):
         await hass.services.async_call(
             DOMAIN,
             "send_gcode",
