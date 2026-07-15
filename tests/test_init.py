@@ -18,6 +18,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.moonraker import (
     MoonrakerDataUpdateCoordinator,
+    _QuietUnreachableLogFilter,
     _async_is_tcp_reachable,
     _build_thumbnail_path,
     _normalize_gcode_path,
@@ -546,6 +547,67 @@ async def test_offline_poll_error_log_suppressed_when_option_enabled(hass, caplo
     )
 
     assert await async_unload_entry(hass, config_entry)
+
+
+async def test_offline_poll_fully_quiet_when_debug_disabled(hass, caplog):
+    """Without debug logging enabled, quiet mode emits no record at all."""
+    config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=MOCK_CONFIG,
+        options={CONF_OPTION_QUIET_UNREACHABLE: True},
+        entry_id="quiet_offline_no_debug",
+    )
+    config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(config_entry.entry_id)
+
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]
+
+    with (
+        patch(
+            "custom_components.moonraker._async_is_tcp_reachable",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        await coordinator.async_refresh()
+
+    assert not coordinator.last_update_success
+    assert not any(
+        "Error fetching moonraker data" in record.getMessage()
+        for record in caplog.records
+    )
+
+    assert await async_unload_entry(hass, config_entry)
+
+
+async def test_coordinator_logger_filters_do_not_accumulate(hass):
+    """Recreating a coordinator must not stack filters or drop foreign ones."""
+    config_entry = MockConfigEntry(
+        domain=DOMAIN, data=MOCK_CONFIG, entry_id="filter_hygiene"
+    )
+
+    coordinator = MoonrakerDataUpdateCoordinator(
+        hass, client=MagicMock(), config_entry=config_entry, api_device_name="printer"
+    )
+    foreign_filter = logging.Filter("foreign")
+    coordinator.logger.addFilter(foreign_filter)
+
+    recreated = MoonrakerDataUpdateCoordinator(
+        hass, client=MagicMock(), config_entry=config_entry, api_device_name="printer"
+    )
+
+    assert recreated.logger is coordinator.logger
+    assert foreign_filter in recreated.logger.filters
+    quiet_filters = [
+        log_filter
+        for log_filter in recreated.logger.filters
+        if isinstance(log_filter, _QuietUnreachableLogFilter)
+    ]
+    assert len(quiet_filters) == 1
+    assert quiet_filters[0].coordinator is recreated
+
+    recreated.logger.removeFilter(foreign_filter)
 
 
 async def test_offline_poll_error_log_kept_by_default(hass, caplog):
