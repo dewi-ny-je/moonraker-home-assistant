@@ -59,6 +59,32 @@ def _log_unreachable(entry: ConfigEntry, message: str, *args: Any) -> None:
         _LOGGER.warning(message, *args)
 
 
+class _QuietUnreachableLogFilter(logging.Filter):
+    """Downgrade coordinator failure logs caused by quiet unreachable printers.
+
+    DataUpdateCoordinator error-logs the first failed refresh after a
+    successful one, which would still surface an error-level connection
+    message when a quiet-mode printer goes offline. The coordinator flags
+    such refreshes and this filter demotes the resulting records to DEBUG.
+    """
+
+    def __init__(self, coordinator: "MoonrakerDataUpdateCoordinator") -> None:
+        """Initialize the filter for a single coordinator."""
+        super().__init__()
+        self.coordinator = coordinator
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Drop warning+ records for quiet unreachable refresh failures."""
+        if (
+            record.levelno < logging.WARNING
+            or not self.coordinator.quiet_unreachable_failure
+        ):
+            return True
+        self.coordinator.quiet_unreachable_failure = False
+        _LOGGER.debug(record.getMessage())
+        return False
+
+
 def _normalize_moonraker_port(port: int | str | None) -> int:
     """Return the effective Moonraker port used at runtime."""
     if port is None or port == "":
@@ -392,10 +418,18 @@ class MoonrakerDataUpdateCoordinator(DataUpdateCoordinator):
         self.query_obj = {OBJ: {}}
         self.load_sensor_data(SENSORS)
         self.add_query_objects("virtual_sdcard", "file_path")
+        self.quiet_unreachable_failure = False
+
+        # The base coordinator logs "Error fetching ... data" through the
+        # logger it is given; use a per-entry child logger so quiet mode can
+        # demote those records without affecting other entries.
+        logger = logging.getLogger(f"{__name__}.coordinator.{config_entry.entry_id}")
+        logger.filters.clear()
+        logger.addFilter(_QuietUnreachableLogFilter(self))
 
         super().__init__(
             hass,
-            _LOGGER,
+            logger,
             name=DOMAIN,
             update_interval=SCAN_INTERVAL,
             config_entry=config_entry,
@@ -403,6 +437,7 @@ class MoonrakerDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         """Update data via library."""
+        self.quiet_unreachable_failure = False
         data = {}
 
         for updater in self.updaters:
@@ -511,7 +546,13 @@ class MoonrakerDataUpdateCoordinator(DataUpdateCoordinator):
                     self.config_entry.data.get(CONF_URL),
                     _entry_port(self.config_entry),
                 )
-                raise UpdateFailed()
+                self.quiet_unreachable_failure = _quiet_unreachable_logs(
+                    self.config_entry
+                )
+                raise UpdateFailed(
+                    f"{self.config_entry.data.get(CONF_URL)}:"
+                    f"{_entry_port(self.config_entry)} is unreachable"
+                )
             _LOGGER.warning("connection to moonraker down, restarting")
             await self.moonraker.start()
         try:
@@ -539,7 +580,10 @@ class MoonrakerDataUpdateCoordinator(DataUpdateCoordinator):
                     self.config_entry.data.get(CONF_URL),
                     _entry_port(self.config_entry),
                 )
-                raise UpdateFailed()
+                raise UpdateFailed(
+                    f"{self.config_entry.data.get(CONF_URL)}:"
+                    f"{_entry_port(self.config_entry)} is unreachable"
+                )
             _LOGGER.warning("connection to moonraker down, restarting")
             await self.moonraker.start()
         try:
