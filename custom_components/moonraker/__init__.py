@@ -81,7 +81,15 @@ class _QuietUnreachableLogFilter(logging.Filter):
         ):
             return True
         self.coordinator.quiet_unreachable_failure = False
-        _LOGGER.debug(record.getMessage())
+        # Re-dispatch the same record at DEBUG so the logger name, message
+        # args, and exception info survive. Logger.handle() bypasses the
+        # effective-level check, so guard it explicitly to stay quiet when
+        # debug logging is off.
+        logger = logging.getLogger(record.name)
+        if logger.isEnabledFor(logging.DEBUG):
+            record.levelno = logging.DEBUG
+            record.levelname = logging.getLevelName(logging.DEBUG)
+            logger.handle(record)
         return False
 
 
@@ -424,7 +432,9 @@ class MoonrakerDataUpdateCoordinator(DataUpdateCoordinator):
         # logger it is given; use a per-entry child logger so quiet mode can
         # demote those records without affecting other entries.
         logger = logging.getLogger(f"{__name__}.coordinator.{config_entry.entry_id}")
-        logger.filters.clear()
+        for log_filter in list(logger.filters):
+            if isinstance(log_filter, _QuietUnreachableLogFilter):
+                logger.removeFilter(log_filter)
         logger.addFilter(_QuietUnreachableLogFilter(self))
 
         super().__init__(
