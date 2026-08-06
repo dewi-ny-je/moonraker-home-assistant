@@ -59,6 +59,14 @@ def _log_unreachable(entry: ConfigEntry, message: str, *args: Any) -> None:
         _LOGGER.warning(message, *args)
 
 
+class _QuietUnreachableUpdateFailed(UpdateFailed):
+    """Refresh failure caused by an unreachable printer in quiet mode.
+
+    Only refreshes aborted by this exception may have their coordinator
+    failure log demoted; any other ``UpdateFailed`` keeps its error level.
+    """
+
+
 class _QuietUnreachableLogFilter(logging.Filter):
     """Downgrade coordinator failure logs caused by quiet unreachable printers.
 
@@ -66,6 +74,12 @@ class _QuietUnreachableLogFilter(logging.Filter):
     successful one, which would still surface an error-level connection
     message when a quiet-mode printer goes offline. The coordinator flags
     such refreshes and this filter demotes the resulting records to DEBUG.
+
+    The flag is scoped to a single refresh: it is only raised while handling
+    a ``_QuietUnreachableUpdateFailed`` inside ``_async_update_data`` and is
+    always cleared when that refresh ends, so unrelated warnings on this
+    logger (including failures from ``async_fetch_data`` calls made outside
+    a refresh) are never demoted.
     """
 
     def __init__(self, coordinator: "MoonrakerDataUpdateCoordinator") -> None:
@@ -287,6 +301,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     await coordinator.async_refresh()
 
     if not coordinator.last_update_success:
+        coordinator.detach_log_filter()
         raise ConfigEntryNotReady
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
@@ -435,7 +450,8 @@ class MoonrakerDataUpdateCoordinator(DataUpdateCoordinator):
         for log_filter in list(logger.filters):
             if isinstance(log_filter, _QuietUnreachableLogFilter):
                 logger.removeFilter(log_filter)
-        logger.addFilter(_QuietUnreachableLogFilter(self))
+        self.quiet_log_filter = _QuietUnreachableLogFilter(self)
+        logger.addFilter(self.quiet_log_filter)
 
         super().__init__(
             hass,
@@ -445,13 +461,36 @@ class MoonrakerDataUpdateCoordinator(DataUpdateCoordinator):
             config_entry=config_entry,
         )
 
+    def detach_log_filter(self) -> None:
+        """Remove the quiet-mode filter from the process-wide entry logger.
+
+        Loggers live for the lifetime of the process, so the filter (and the
+        coordinator it references) must be dropped when the entry goes away.
+        """
+        log_filter = self.quiet_log_filter
+        if log_filter is None:
+            return
+        self.quiet_log_filter = None
+        self.logger.removeFilter(log_filter)
+
+    async def _async_refresh(self, *args, **kwargs):
+        """Refresh data, keeping the quiet-failure flag scoped to this refresh."""
+        try:
+            return await super()._async_refresh(*args, **kwargs)
+        finally:
+            self.quiet_unreachable_failure = False
+
     async def _async_update_data(self):
         """Update data via library."""
-        self.quiet_unreachable_failure = False
         data = {}
 
-        for updater in self.updaters:
-            data.update(await updater(self))
+        try:
+            for updater in self.updaters:
+                data.update(await updater(self))
+        except _QuietUnreachableUpdateFailed:
+            # Only this refresh's own failure log may be demoted.
+            self.quiet_unreachable_failure = True
+            raise
 
         # --- Dynamic polling logic ---
         prev_state = getattr(self, "_last_print_state", None)
@@ -556,13 +595,13 @@ class MoonrakerDataUpdateCoordinator(DataUpdateCoordinator):
                     self.config_entry.data.get(CONF_URL),
                     _entry_port(self.config_entry),
                 )
-                self.quiet_unreachable_failure = _quiet_unreachable_logs(
-                    self.config_entry
-                )
-                raise UpdateFailed(
+                error = (
                     f"{self.config_entry.data.get(CONF_URL)}:"
                     f"{_entry_port(self.config_entry)} is unreachable"
                 )
+                if _quiet_unreachable_logs(self.config_entry):
+                    raise _QuietUnreachableUpdateFailed(error)
+                raise UpdateFailed(error)
             _LOGGER.warning("connection to moonraker down, restarting")
             await self.moonraker.start()
         try:
@@ -661,6 +700,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     if unloaded:
         hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator.detach_log_filter()
 
     return unloaded
 
