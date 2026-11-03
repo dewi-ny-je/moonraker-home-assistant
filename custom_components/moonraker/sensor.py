@@ -445,8 +445,9 @@ async def async_setup_optional_sensors(coordinator, entry, async_add_entities):
                 result = await coordinator.async_fetch_data(
                     METHODS.PRINTER_OBJECTS_QUERY, query_obj, quiet=True
                 )
+                env_status = result.get("status", {}).get(obj, {})
 
-                if "pressure" in result["status"][obj]:
+                if "pressure" in env_status:
                     desc = MoonrakerSensorDescription(
                         key=f"{split_obj[0]}_{split_obj[1]}_pressure",
                         status_key=obj,
@@ -462,7 +463,7 @@ async def async_setup_optional_sensors(coordinator, entry, async_add_entities):
                     )
                     sensors.append(desc)
 
-                if "humidity" in result["status"][obj]:
+                if "humidity" in env_status:
                     desc = MoonrakerSensorDescription(
                         key=f"{split_obj[0]}_{split_obj[1]}_humidity",
                         status_key=obj,
@@ -478,7 +479,7 @@ async def async_setup_optional_sensors(coordinator, entry, async_add_entities):
                     )
                     sensors.append(desc)
 
-                if "gas" in result["status"][obj]:
+                if "gas" in env_status:
                     desc = MoonrakerSensorDescription(
                         key=f"{split_obj[0]}_{split_obj[1]}_gas",
                         status_key=obj,
@@ -577,7 +578,7 @@ async def async_setup_optional_sensors(coordinator, entry, async_add_entities):
                 METHODS.PRINTER_OBJECTS_QUERY, query_obj, quiet=True
             )
 
-            if fan_data["status"][obj]["rpm"]:
+            if fan_data.get("status", {}).get(obj, {}).get("rpm"):
                 desc = MoonrakerSensorDescription(
                     key=f"{split_obj[0]}_{split_obj[1]}_rpm",
                     status_key=obj,
@@ -598,7 +599,7 @@ async def async_setup_optional_sensors(coordinator, entry, async_add_entities):
                 METHODS.PRINTER_OBJECTS_QUERY, query_obj, quiet=True
             )
 
-            if fan_data["status"]["fan"]["rpm"]:
+            if fan_data.get("status", {}).get("fan", {}).get("rpm"):
                 desc = MoonrakerSensorDescription(
                     key="fan_rpm",
                     name="Fan RPM",
@@ -618,7 +619,7 @@ async def async_setup_optional_sensors(coordinator, entry, async_add_entities):
             result = await coordinator.async_fetch_data(
                 METHODS.PRINTER_OBJECTS_QUERY, query_obj, quiet=True
             )
-            status = result["status"].get(obj, {})
+            status = result.get("status", {}).get(obj, {})
 
             base_key = obj.replace(" ", "_")
             base_name = (
@@ -949,7 +950,7 @@ class MoonrakerSensor(BaseMoonrakerEntity, SensorEntity):
         self._attr_available = True
         try:
             self._attr_native_value = description.value_fn(self)
-        except (KeyError, TypeError):
+        except (KeyError, IndexError, TypeError):
             self._attr_native_value = None
             self._attr_available = False
         self._attr_icon = description.icon
@@ -965,7 +966,7 @@ class MoonrakerSensor(BaseMoonrakerEntity, SensorEntity):
         """Handle updated data from the coordinator."""
         try:
             self._attr_native_value = self.entity_description.value_fn(self)
-        except (KeyError, TypeError):
+        except (KeyError, IndexError, TypeError):
             self._attr_available = False
             self.async_write_ha_state()
             return
