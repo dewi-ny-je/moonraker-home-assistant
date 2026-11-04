@@ -73,7 +73,7 @@ SENSORS: tuple[MoonrakerSensorDescription, ...] = (
     MoonrakerSensorDescription(
         key="state",
         name="Printer State",
-        value_fn=lambda sensor: sensor.coordinator.data["printer.info"]["state"],
+        value_fn=lambda sensor: printer_state(sensor.coordinator.data),
         device_class=SensorDeviceClass.ENUM,
         options=PRINTERSTATES.list(),
         subscriptions=[],
@@ -1094,6 +1094,14 @@ class U1ExtruderFilamentSensor(MoonrakerSensor):
         """Handle updated data from the coordinator."""
         self._attr_extra_state_attributes = self.entity_description.extra_state_fn(self)
         super()._handle_coordinator_update()
+
+
+def printer_state(data):
+    """Return the Klipper state, or disconnected when Moonraker cannot reach Klipper."""
+    printer_info = data["printer.info"]
+    if "error" in printer_info:
+        return PRINTERSTATES.DISCONNECTED.value
+    return printer_info["state"]
 
 
 def calculate_print_speed(data):

@@ -17,7 +17,7 @@ Sensors that are added on integration startup.
     - Description
     - Definition
   * - Printer State
-    - State of the Printer
+    - State of the Printer, available values ["ready", "startup", "shutdown", "error", "disconnected"]. "disconnected" means Moonraker is reachable but Klipper is not running.
     - From Moonraker API (printer info, state)
   * - Printer Message
     - Printer global message

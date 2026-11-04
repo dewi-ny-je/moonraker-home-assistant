@@ -69,7 +69,7 @@ Klipper Not Ready
 -------------------------------------
 
 Moonraker can be reachable while Klipper is not running, for example when the Moonraker host stays on but the printer board is powered off.
-In that case, entities whose data Klipper no longer reports are shown as unavailable until the data comes back.
+In that case, the Printer State sensor shows ``disconnected``, and entities whose data Klipper no longer reports are shown as unavailable until the data comes back.
 
 If Home Assistant starts while Klipper is not ready, Moonraker cannot list the printer objects.
 The integration still loads, but entities for those objects (heaters, fans, sensors, output pins, lights, filament sensors) are not created.

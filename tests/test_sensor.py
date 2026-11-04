@@ -1640,3 +1640,26 @@ async def test_optional_sensors_follow_up_query_error(hass, get_default_api_resp
     assert hass.states.get("sensor.mainsail_heater_fan_rpm") is None
     assert hass.states.get("sensor.mainsail_fan_rpm") is None
     assert hass.states.get("sensor.mainsail_bed_temperature") is not None
+
+
+async def test_printer_state_disconnected(hass, get_default_api_response):
+    """Printer State is disconnected while Moonraker cannot reach Klipper."""
+    config_entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG, entry_id="test")
+    config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]
+
+    def klippy_down(method, **kwargs):
+        if method == "printer.info":
+            return {"error": {"code": 503, "message": "Klippy Host not connected"}}
+        return get_default_api_response
+
+    with patch("moonraker_api.MoonrakerClient.call_method", side_effect=klippy_down):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+    assert hass.states.get("sensor.mainsail_printer_state").state == "disconnected"
+
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.mainsail_printer_state").state == "ready"

@@ -119,3 +119,4 @@ class PRINTERSTATES(ExtendedEnum):
     STARTUP = "startup"
     SHUTDOWN = "shutdown"
     ERROR = "error"
+    DISCONNECTED = "disconnected"
