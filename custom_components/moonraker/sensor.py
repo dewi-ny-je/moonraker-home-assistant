@@ -26,6 +26,9 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 from .const import (
     DOMAIN,
     METHODS,
+    MMU_ENCODER_OBJECT,
+    MMU_GATE_ATTRIBUTES,
+    MMU_OBJECT,
     OBJ,
     PRINTERSTATES,
     PRINTSTATES,
@@ -67,6 +70,13 @@ class U1ExtruderFilamentSensorDescription(MoonrakerSensorDescription):
     """Class describing U1 filament color sensor, with an additional extra_state_fn."""
 
     extra_state_fn: Callable = lambda sensor: None
+
+
+@dataclass(frozen=True)
+class MoonrakerAttributesSensorDescription(MoonrakerSensorDescription):
+    """Sensor description with an extra_state_fn for state attributes."""
+
+    extra_state_fn: Callable = lambda sensor: {}
 
 
 SENSORS: tuple[MoonrakerSensorDescription, ...] = (
@@ -374,6 +384,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     await async_setup_queue_sensors(coordinator, entry, async_add_entities)
     await async_setup_spoolman_sensors(coordinator, entry, async_add_entities)
     await async_setup_u1_sensors(coordinator, entry, async_add_entities)
+    await async_setup_mmu_sensors(coordinator, entry, async_add_entities)
 
 
 async def _machine_system_info_updater(coordinator):
@@ -973,6 +984,168 @@ def create_u1_filament_sensor_description(extruder_index):
     )
 
 
+def _mmu_value(sensor, field):
+    """Return a field of the Happy Hare mmu object."""
+    return sensor.coordinator.data["status"][MMU_OBJECT][field]
+
+
+def _mmu_selection(value):
+    """Map Happy Hare tool or gate numbers, where -1 is unknown and -2 is bypass."""
+    if value == -2:
+        return "Bypass"
+    if value is None or value < 0:
+        return None
+    return value
+
+
+def _mmu_gate_field(sensor, field, gate):
+    """Return one gate's value of a per-gate mmu list, or None."""
+    values = sensor.coordinator.data.get("status", {}).get(MMU_OBJECT, {}).get(field)
+    if not isinstance(values, list) or gate >= len(values):
+        return None
+    return values[gate]
+
+
+def create_mmu_gate_sensor_description(gate):
+    """Create the description of one MMU gate sensor."""
+
+    def _material(sensor):
+        return sensor.coordinator.data["status"][MMU_OBJECT]["gate_material"][gate]
+
+    def _attributes(sensor):
+        attributes = {}
+        for field, name in MMU_GATE_ATTRIBUTES.items():
+            value = _mmu_gate_field(sensor, field, gate)
+            if value is not None:
+                attributes[name] = value
+        return attributes
+
+    return MoonrakerAttributesSensorDescription(
+        key=f"mmu_gate_{gate}",
+        name=f"MMU Gate {gate}",
+        value_fn=_material,
+        extra_state_fn=_attributes,
+        subscriptions=[(MMU_OBJECT, "gate_material")]
+        + [(MMU_OBJECT, field) for field in MMU_GATE_ATTRIBUTES],
+        icon="mdi:printer-3d-nozzle",
+        entity_registry_enabled_default=False,
+    )
+
+
+MMU_SENSORS: tuple[MoonrakerSensorDescription, ...] = (
+    MoonrakerSensorDescription(
+        key="mmu_action",
+        name="MMU Action",
+        value_fn=lambda sensor: _mmu_value(sensor, "action"),
+        subscriptions=[(MMU_OBJECT, "action")],
+        icon="mdi:cog-transfer",
+    ),
+    MoonrakerSensorDescription(
+        key="mmu_filament",
+        name="MMU Filament",
+        value_fn=lambda sensor: _mmu_value(sensor, "filament"),
+        subscriptions=[(MMU_OBJECT, "filament")],
+        icon="mdi:printer-3d-nozzle",
+    ),
+    MoonrakerSensorDescription(
+        key="mmu_tool",
+        name="MMU Tool",
+        value_fn=lambda sensor: _mmu_selection(_mmu_value(sensor, "tool")),
+        subscriptions=[(MMU_OBJECT, "tool")],
+        icon="mdi:numeric",
+    ),
+    MoonrakerSensorDescription(
+        key="mmu_gate",
+        name="MMU Gate",
+        value_fn=lambda sensor: _mmu_selection(_mmu_value(sensor, "gate")),
+        subscriptions=[(MMU_OBJECT, "gate")],
+        icon="mdi:numeric",
+    ),
+    MoonrakerSensorDescription(
+        key="mmu_print_state",
+        name="MMU Print State",
+        value_fn=lambda sensor: _mmu_value(sensor, "print_state"),
+        subscriptions=[(MMU_OBJECT, "print_state")],
+        icon="mdi:printer-3d",
+    ),
+    MoonrakerSensorDescription(
+        key="mmu_reason_for_pause",
+        name="MMU Reason For Pause",
+        value_fn=lambda sensor: _mmu_value(sensor, "reason_for_pause"),
+        subscriptions=[(MMU_OBJECT, "reason_for_pause")],
+        icon="mdi:pause-circle-outline",
+    ),
+    MoonrakerSensorDescription(
+        key="mmu_toolchanges",
+        name="MMU Toolchanges",
+        value_fn=lambda sensor: _mmu_value(sensor, "num_toolchanges"),
+        subscriptions=[(MMU_OBJECT, "num_toolchanges")],
+        icon="mdi:swap-horizontal",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
+)
+
+
+def create_mmu_encoder_sensor_description(obj):
+    """Create the flow rate sensor description of a Happy Hare encoder."""
+    name = obj.split(maxsplit=1)[1].strip()
+    label = (
+        "MMU Encoder"
+        if name == MMU_ENCODER_OBJECT
+        else f"MMU Encoder {name.replace('_', ' ').title()}"
+    )
+    return MoonrakerSensorDescription(
+        key=f"mmu_encoder_{name}_flow_rate",
+        status_key=obj,
+        name=f"{label} Flow Rate",
+        value_fn=lambda sensor: sensor.coordinator.data["status"][sensor.status_key][
+            "flow_rate"
+        ],
+        subscriptions=[(obj, "flow_rate")],
+        icon="mdi:speedometer",
+        unit=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+    )
+
+
+async def async_setup_mmu_sensors(coordinator, entry, async_add_entities):
+    """Happy Hare MMU sensors."""
+    object_list = await coordinator.async_fetch_data(METHODS.PRINTER_OBJECTS_LIST)
+    objects = object_list.get("objects", [])
+    if MMU_OBJECT not in objects:
+        return
+
+    try:
+        mmu_query = await coordinator.async_fetch_data(
+            METHODS.PRINTER_OBJECTS_QUERY, {OBJ: {MMU_OBJECT: ["num_gates"]}}
+        )
+    except UpdateFailed:
+        _LOGGER.debug("`%s` query failed, don't setup MMU sensors", MMU_OBJECT)
+        return
+
+    num_gates = _as_int(
+        (mmu_query.get("status") or {}).get(MMU_OBJECT, {}).get("num_gates")
+    )
+
+    sensors = list(MMU_SENSORS)
+    sensors.extend(
+        create_mmu_encoder_sensor_description(obj)
+        for obj in objects
+        if obj.split(maxsplit=1)[:1] == [MMU_ENCODER_OBJECT]
+        and len(obj.split(maxsplit=1)) == 2
+    )
+    gate_sensors = [
+        create_mmu_gate_sensor_description(gate) for gate in range(num_gates or 0)
+    ]
+
+    coordinator.load_sensor_data(sensors + gate_sensors)
+    await coordinator.async_refresh()
+    async_add_entities(
+        [MoonrakerSensor(coordinator, entry, desc) for desc in sensors]
+        + [MoonrakerAttributesSensor(coordinator, entry, desc) for desc in gate_sensors]
+    )
+
+
 async def _machine_update_updater(coordinator):
     return {
         "machine_update": await coordinator.async_fetch_data(
@@ -1079,6 +1252,21 @@ class MoonrakerSensor(BaseMoonrakerEntity, SensorEntity):
         if state != PRINTSTATES.PRINTING.value:
             return "" if isinstance(value, str) else 0.0
         return value
+
+
+class MoonrakerAttributesSensor(MoonrakerSensor):
+    """Sensor that also exposes the attributes from extra_state_fn."""
+
+    def __init__(self, coordinator, entry, description):
+        """Init."""
+        super().__init__(coordinator, entry, description)
+        self._attr_extra_state_attributes = self.entity_description.extra_state_fn(self)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._attr_extra_state_attributes = self.entity_description.extra_state_fn(self)
+        super()._handle_coordinator_update()
 
 
 class U1ExtruderFilamentSensor(MoonrakerSensor):

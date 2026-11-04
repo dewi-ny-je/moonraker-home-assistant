@@ -53,6 +53,17 @@ U1_FILAMENT_ATTRIBUTES = [
     "filament_edit",
     "filament_soft",
 ]
+
+# Happy Hare MMU
+MMU_OBJECT = "mmu"
+MMU_ENCODER_OBJECT = "mmu_encoder"
+MMU_GATE_ATTRIBUTES = {
+    "gate_color": "color",
+    "gate_name": "name",
+    "gate_status": "status",
+    "gate_spool_id": "spool_id",
+    "gate_temperature": "temperature",
+}
 # CONNECTION DATA
 DEFAULT_PORT = 7125
 

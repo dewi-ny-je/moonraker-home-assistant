@@ -1640,3 +1640,174 @@ async def test_optional_sensors_follow_up_query_error(hass, get_default_api_resp
     assert hass.states.get("sensor.mainsail_heater_fan_rpm") is None
     assert hass.states.get("sensor.mainsail_fan_rpm") is None
     assert hass.states.get("sensor.mainsail_bed_temperature") is not None
+
+
+def _mmu_status():
+    """Happy Hare mmu status for a three gate MMU."""
+    return {
+        "num_gates": 3,
+        "action": "Idle",
+        "filament": "Loaded",
+        "tool": 1,
+        "gate": 2,
+        "print_state": "printing",
+        "reason_for_pause": "",
+        "num_toolchanges": 4,
+        "gate_material": ["PLA", "PETG", "ABS"],
+        "gate_color": ["ff0000", "00ff00"],
+        "gate_name": ["Red", "Green", "Blue"],
+        "gate_status": [1, 0, 2],
+        "gate_spool_id": [3, -1, None],
+        "gate_temperature": [210, 240, 250],
+    }
+
+
+def _add_mmu(response, mmu, encoders=("mmu_encoder mmu_encoder",)):
+    """Add the Happy Hare objects to a default API response."""
+    response["objects"].extend(["mmu", *encoders])
+    response["status"]["mmu"] = mmu
+    for encoder in encoders:
+        response["status"][encoder] = {"flow_rate": 97}
+
+
+async def _setup_entry(hass):
+    config_entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG, entry_id="test")
+    config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    return config_entry
+
+
+async def _enable_mmu_gates(hass, config_entry, gates):
+    entity_registry = er.async_get(hass)
+    for gate in range(gates):
+        entity_id = f"sensor.mainsail_mmu_gate_{gate}"
+        assert entity_registry.async_get(entity_id).disabled
+        entity_registry.async_update_entity(entity_id, disabled_by=None)
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize(
+    "sensor, value",
+    [
+        ("mainsail_mmu_action", "Idle"),
+        ("mainsail_mmu_filament", "Loaded"),
+        ("mainsail_mmu_tool", "1"),
+        ("mainsail_mmu_gate", "2"),
+        ("mainsail_mmu_print_state", "printing"),
+        ("mainsail_mmu_reason_for_pause", ""),
+        ("mainsail_mmu_toolchanges", "4"),
+        ("mainsail_mmu_encoder_flow_rate", "97"),
+    ],
+)
+async def test_mmu_sensors(hass, get_default_api_response, sensor, value):
+    """Happy Hare sensors report the mmu object."""
+    _add_mmu(get_default_api_response, _mmu_status())
+    await _setup_entry(hass)
+
+    assert hass.states.get(f"sensor.{sensor}").state == value
+
+
+async def test_mmu_sensors_not_created_without_mmu(hass):
+    """No MMU sensors without Happy Hare."""
+    await _setup_entry(hass)
+
+    assert hass.states.get("sensor.mainsail_mmu_action") is None
+    assert hass.states.get("sensor.mainsail_bed_temperature") is not None
+
+
+@pytest.mark.parametrize(
+    "selection, value",
+    [(0, "0"), (-1, "unknown"), (-2, "Bypass"), (None, "unknown")],
+)
+async def test_mmu_tool_and_gate_codes(
+    hass, get_default_api_response, selection, value
+):
+    """Happy Hare -1 means unknown and -2 means bypass."""
+    mmu = _mmu_status()
+    mmu["tool"] = selection
+    mmu["gate"] = selection
+    _add_mmu(get_default_api_response, mmu)
+    await _setup_entry(hass)
+
+    assert hass.states.get("sensor.mainsail_mmu_tool").state == value
+    assert hass.states.get("sensor.mainsail_mmu_gate").state == value
+
+
+async def test_mmu_named_encoder(hass, get_default_api_response):
+    """Encoders with another name get it in the sensor name."""
+    _add_mmu(get_default_api_response, _mmu_status(), encoders=("mmu_encoder unit_1",))
+    await _setup_entry(hass)
+
+    assert hass.states.get("sensor.mainsail_mmu_encoder_unit_1_flow_rate").state == (
+        "97"
+    )
+
+
+async def test_mmu_gate_sensors(hass, get_default_api_response):
+    """Gate sensors report material with the other gate fields as attributes."""
+    _add_mmu(get_default_api_response, _mmu_status())
+    config_entry = await _setup_entry(hass)
+    await _enable_mmu_gates(hass, config_entry, 3)
+
+    state = hass.states.get("sensor.mainsail_mmu_gate_0")
+    assert state.state == "PLA"
+    assert state.attributes["color"] == "ff0000"
+    assert state.attributes["name"] == "Red"
+    assert state.attributes["status"] == 1
+    assert state.attributes["spool_id"] == 3
+    assert state.attributes["temperature"] == 210
+
+    state = hass.states.get("sensor.mainsail_mmu_gate_1")
+    assert state.attributes["status"] == 0
+    assert state.attributes["spool_id"] == -1
+
+    state = hass.states.get("sensor.mainsail_mmu_gate_2")
+    assert state.state == "ABS"
+    assert "color" not in state.attributes
+    assert "spool_id" not in state.attributes
+
+    get_default_api_response["status"]["mmu"]["gate_material"] = ["PLA"]
+    get_default_api_response["status"]["mmu"]["gate_name"] = None
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert hass.states.get("sensor.mainsail_mmu_gate_0").state == "PLA"
+    assert "name" not in hass.states.get("sensor.mainsail_mmu_gate_0").attributes
+    assert hass.states.get("sensor.mainsail_mmu_gate_2").state == "unavailable"
+
+
+async def test_mmu_without_num_gates(hass, get_default_api_response):
+    """Without num_gates only the gate sensors are skipped."""
+    mmu = _mmu_status()
+    del mmu["num_gates"]
+    _add_mmu(get_default_api_response, mmu)
+    config_entry = await _setup_entry(hass)
+
+    entity_registry = get_entity_registry(hass)
+    entries = er.async_entries_for_config_entry(entity_registry, config_entry.entry_id)
+    assert not [e for e in entries if e.unique_id.startswith("test_mmu_gate_")]
+    assert hass.states.get("sensor.mainsail_mmu_action").state == "Idle"
+
+
+async def test_mmu_query_failure(hass, get_default_api_response):
+    """A failing mmu probe does not abort sensor setup."""
+    _add_mmu(get_default_api_response, _mmu_status())
+
+    def _call_method_side_effect(method, *args, **kwargs):
+        if method == "printer.objects.query" and kwargs.get("objects") == {
+            "mmu": ["num_gates"]
+        }:
+            raise TimeoutError
+        return get_default_api_response
+
+    with patch(
+        "moonraker_api.MoonrakerClient.call_method",
+        side_effect=_call_method_side_effect,
+    ):
+        await _setup_entry(hass)
+
+    assert hass.states.get("sensor.mainsail_mmu_action") is None
+    assert hass.states.get("sensor.mainsail_bed_temperature") is not None

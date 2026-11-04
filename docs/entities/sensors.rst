@@ -111,6 +111,49 @@ Sensors that are added on integration startup.
     - From Klipper (print_task_config)
 
 
+Happy Hare MMU Sensors
+----------------------------
+
+Added when `Happy Hare <https://github.com/moggieuk/Happy-Hare>`__ is installed
+(Klipper reports an ``mmu`` object). See the Happy Hare
+`printer variables <https://github.com/moggieuk/Happy-Hare/wiki/Printer-Variables>`__
+for the meaning of each value.
+
+.. list-table:: Happy Hare MMU Sensors
+  :header-rows: 1
+
+  * - Sensor Name
+    - Description
+    - Definition
+  * - MMU Action
+    - Current MMU action, e.g. Idle, Loading, Unloading, Homing.
+    - From Klipper (mmu, action)
+  * - MMU Filament
+    - Filament state in the extruder: Loaded, Unloaded or Unknown.
+    - From Klipper (mmu, filament)
+  * - MMU Tool
+    - Selected tool number, ``Bypass`` when the bypass is selected, unknown when Happy Hare does not know it.
+    - From Klipper (mmu, tool)
+  * - MMU Gate
+    - Selected gate number, ``Bypass`` when the bypass is selected, unknown when Happy Hare does not know it.
+    - From Klipper (mmu, gate)
+  * - MMU Print State
+    - Print state as seen by the MMU, e.g. printing, paused, pause_locked.
+    - From Klipper (mmu, print_state)
+  * - MMU Reason For Pause
+    - Why the MMU paused the print. Empty when not paused.
+    - From Klipper (mmu, reason_for_pause)
+  * - MMU Toolchanges
+    - Toolchanges done in the current print.
+    - From Klipper (mmu, num_toolchanges)
+  * - MMU Encoder Flow Rate
+    - Measured flow rate in %. Values below 100% hint at under-extrusion. One sensor per encoder, created only when the MMU has one.
+    - From Klipper (mmu_encoder, flow_rate)
+  * - MMU Gate 0 to MMU Gate N
+    - Filament material in each gate. Color, name, status, spool_id and temperature are attributes. Disabled by default.
+    - From Klipper (mmu, gate_material, gate_color, gate_name, gate_status, gate_spool_id, gate_temperature)
+
+
 History Sensors
 ----------------------------
 
