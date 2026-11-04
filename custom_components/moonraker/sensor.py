@@ -81,9 +81,7 @@ SENSORS: tuple[MoonrakerSensorDescription, ...] = (
     MoonrakerSensorDescription(
         key="message",
         name="Printer Message",
-        value_fn=lambda sensor: sensor.coordinator.data["printer.info"][
-            "state_message"
-        ],
+        value_fn=lambda sensor: printer_message(sensor.coordinator.data),
         subscriptions=[],
     ),
     MoonrakerSensorDescription(
@@ -1102,6 +1100,14 @@ def printer_state(data):
     if "error" in printer_info:
         return PRINTERSTATES.DISCONNECTED.value
     return printer_info["state"]
+
+
+def printer_message(data):
+    """Return the Klipper state message, or Moonraker's error while Klipper is unreachable."""
+    printer_info = data["printer.info"]
+    if "error" in printer_info:
+        return printer_info["error"]["message"]
+    return printer_info["state_message"]
 
 
 def calculate_print_speed(data):

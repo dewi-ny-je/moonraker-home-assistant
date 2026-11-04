@@ -1659,7 +1659,14 @@ async def test_printer_state_disconnected(hass, get_default_api_response):
         await coordinator.async_refresh()
         await hass.async_block_till_done()
     assert hass.states.get("sensor.mainsail_printer_state").state == "disconnected"
+    assert (
+        hass.states.get("sensor.mainsail_printer_message").state
+        == "Klippy Host not connected"
+    )
 
     await coordinator.async_refresh()
     await hass.async_block_till_done()
     assert hass.states.get("sensor.mainsail_printer_state").state == "ready"
+    assert (
+        hass.states.get("sensor.mainsail_printer_message").state == "Printer is ready"
+    )
