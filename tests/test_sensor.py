@@ -1670,3 +1670,34 @@ async def test_printer_state_disconnected(hass, get_default_api_response):
     assert (
         hass.states.get("sensor.mainsail_printer_message").state == "Printer is ready"
     )
+
+
+@pytest.mark.parametrize(
+    ("error", "state", "message"),
+    [
+        ({"code": 503}, "disconnected", "Klippy Host not connected"),
+        ({"code": 500, "message": "Internal error"}, "unavailable", "unavailable"),
+    ],
+)
+async def test_printer_state_error_variants(
+    hass, get_default_api_response, error, state, message
+):
+    """Only Moonraker's 503 error maps to disconnected; others are unavailable."""
+    config_entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG, entry_id="test")
+    config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]
+
+    def printer_info_error(method, **kwargs):
+        if method == "printer.info":
+            return {"error": error}
+        return get_default_api_response
+
+    with patch(
+        "moonraker_api.MoonrakerClient.call_method", side_effect=printer_info_error
+    ):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+    assert hass.states.get("sensor.mainsail_printer_state").state == state
+    assert hass.states.get("sensor.mainsail_printer_message").state == message

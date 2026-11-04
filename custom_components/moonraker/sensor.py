@@ -1094,10 +1094,22 @@ class U1ExtruderFilamentSensor(MoonrakerSensor):
         super()._handle_coordinator_update()
 
 
+KLIPPY_DISCONNECTED_CODE = 503
+KLIPPY_DISCONNECTED_MESSAGE = "Klippy Host not connected"
+
+
+def _klippy_disconnected_error(printer_info):
+    """Return Moonraker's error when it reports Klippy as not connected, else None."""
+    error = printer_info.get("error")
+    if isinstance(error, dict) and error.get("code") == KLIPPY_DISCONNECTED_CODE:
+        return error
+    return None
+
+
 def printer_state(data):
     """Return the Klipper state, or disconnected when Moonraker cannot reach Klipper."""
     printer_info = data["printer.info"]
-    if "error" in printer_info:
+    if _klippy_disconnected_error(printer_info) is not None:
         return PRINTERSTATES.DISCONNECTED.value
     return printer_info["state"]
 
@@ -1105,8 +1117,9 @@ def printer_state(data):
 def printer_message(data):
     """Return the Klipper state message, or Moonraker's error while Klipper is unreachable."""
     printer_info = data["printer.info"]
-    if "error" in printer_info:
-        return printer_info["error"]["message"]
+    error = _klippy_disconnected_error(printer_info)
+    if error is not None:
+        return error.get("message") or KLIPPY_DISCONNECTED_MESSAGE
     return printer_info["state_message"]
 
 
