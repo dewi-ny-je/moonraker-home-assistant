@@ -17,6 +17,7 @@ This allows you home assistant to connect to your 3D printer and display:
 - Thumbnail of what is being printed at the moment.
 - Emergency stop button
 - Button to trigger macros
+- Happy Hare MMU status, encoder flow rate and gate contents (if installed)
 
 To access the list of all entities and their documentations, look at our [documentation](https://moonraker-home-assistant.readthedocs.io/en/latest/). The list of entities keeps growing on each versions :rocket: . Keep an eye on the releases.
 
